@@ -1,0 +1,15 @@
+# Node
+bot-js/node_modules/
+bot-js/*.memory-card.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Data (player saves — local only)
+data/
+
+# Misc
+.env
+*.log

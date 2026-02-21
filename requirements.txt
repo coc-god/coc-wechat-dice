@@ -1,0 +1,2 @@
+wechaty>=0.10.7
+wechaty-puppet-service>=0.8.1
