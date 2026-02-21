@@ -2,7 +2,7 @@
 
 const { WechatyBuilder } = require('wechaty')
 const { PuppetWechat4u } = require('wechaty-puppet-wechat4u')
-const { handleCommand, handleTemplate } = require('./handlers/messageHandler')
+const { handleCommand } = require('./handlers/messageHandler')
 
 const bot = WechatyBuilder.build({
   name: 'coc-dice-bot',
@@ -44,18 +44,23 @@ bot.on('message', async msg => {
   const roomId = room.id
   const playerName = talker.name()
 
-  if (text.trim().toLowerCase() === '.template') {
-    try {
-      await talker.say(handleTemplate(contactId, roomId, playerName))
-      await room.say(`@${playerName} 已私信发送人物卡模板，填好后在群里 @我 发送 .st 指令批量录入`)
-    } catch (e) {
-      await room.say(`@${playerName} 私信发送失败，请先添加骰娘为好友后重试`)
-    }
-    return
-  }
-
   const response = handleCommand(text, contactId, roomId, playerName)
-  if (response) await room.say(response)
+  if (!response) return
+
+  if (typeof response === 'string') {
+    await room.say(response)
+  } else {
+    // { group?, dm? } — dm goes to talker privately, group goes to room
+    if (response.dm) {
+      try {
+        await talker.say(response.dm)
+      } catch (e) {
+        if (response.group) response.group += '\n(私信发送失败，请先添加骰娘为好友)'
+        else await room.say(`@${playerName}\n❌ 私信发送失败，请先添加骰娘为好友`)
+      }
+    }
+    if (response.group) await room.say(response.group)
+  }
 })
 
 bot.on('error', err => console.error('[错误]', err))

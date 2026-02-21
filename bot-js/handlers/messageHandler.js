@@ -40,6 +40,7 @@ function handleTemplate(contactId, roomId, playerName) {
 }
 
 let players = store.load()
+let rooms   = store.loadRooms()
 
 // In-memory pending .coc results: key → array of stat sets
 const pendingCoc = new Map()
@@ -65,14 +66,21 @@ function handleCommand(text, contactId, roomId, playerName) {
   if (!cmd) return null
 
   const player = store.getPlayer(players, contactId, roomId, playerName)
-  const result = dispatch(cmd, args, player, contactId, roomId)
+  const result = dispatch(cmd, args, player, contactId, roomId, playerName)
   if (result === null) return null
 
   store.save(players)
-  return `@${playerName}\n${result}`
+  store.saveRooms(rooms)
+
+  // Result is either a plain string or { group?, dm? }
+  if (typeof result === 'string') return `@${playerName}\n${result}`
+  return {
+    group: result.group ? `@${playerName}\n${result.group}` : null,
+    dm:    result.dm ?? null,
+  }
 }
 
-function dispatch(cmd, args, player, contactId, roomId) {
+function dispatch(cmd, args, player, contactId, roomId, playerName) {
   if (['.r', '.rd', '.roll'].includes(cmd)) return handleRoll(args, player)
   if (cmd === '.rc') return handleSkillCheck(args, player)
   if (cmd === '.sc' || cmd === '.san') return handleSanCheck(args, player)
@@ -86,6 +94,8 @@ function dispatch(cmd, args, player, contactId, roomId) {
   if (cmd === '.st') return handleSt(args, player)
   if (cmd === '.show') return handleShow(player)
   if (cmd === '.luck') return handleLuck(args, player)
+  if (cmd === '.template') return handleTemplateCmd(contactId, roomId, playerName)
+  if (cmd === '.kp') return handleKp(args, player, contactId, roomId, playerName)
   if (cmd === '.help') return helpText(args)
   return null
 }
@@ -334,6 +344,107 @@ function handleLuck(args, player) {
   return '❌ 用法: .luck set 值 / .luck spend 数量 技能名 技能值'
 }
 
+function handleTemplateCmd(contactId, roomId, playerName) {
+  const player = store.getPlayer(players, contactId, roomId, playerName)
+  const hasStats = STAT_ORDER.filter(k => k !== 'LUCK').some(k => player.stats[STAT_NAMES[k]] !== undefined)
+  return {
+    group: '已私信发送人物卡模板，填好后在群里 @我 发送 .st 指令批量录入',
+    dm:    hasStats ? TEMPLATE_SKILLS_ONLY : TEMPLATE_FULL,
+  }
+}
+
+// ── KP ────────────────────────────────────────────────────────────────────
+
+function isKp(contactId, roomId) {
+  return store.getKp(rooms, roomId)?.contactId === contactId
+}
+
+function handleKp(args, player, contactId, roomId, playerName) {
+  const parts = args.trim().split(/\s+/)
+  const sub  = parts[0]?.toLowerCase() ?? ''
+  const rest = parts.slice(1).join(' ')
+
+  if (!sub) return kpStatus(roomId)
+  if (sub === 'claim')  return kpClaim(contactId, roomId, playerName)
+  if (sub === 'resign') return kpResign(contactId, roomId)
+
+  // Commands below require KP
+  if (!isKp(contactId, roomId)) {
+    const kp = store.getKp(rooms, roomId)
+    return kp
+      ? `❌ 需要KP权限 (当前KP: ${kp.playerName})`
+      : '❌ 需要KP权限，先用 .kp claim 认领KP'
+  }
+
+  if (sub === 'rc')  return kpSecretRoll(rest, player)
+  if (sub === 'npc') return kpNpcRoll(rest)
+  if (sub === 'sc')  return kpNpcSan(rest)
+  return kpStatus(roomId)
+}
+
+function kpStatus(roomId) {
+  const kp = store.getKp(rooms, roomId)
+  const line = kp ? `当前KP: ${kp.playerName}` : '当前无KP'
+  return `👁 ${line}\n━━━━━━━━━━━━━━━━\n` +
+    '.kp claim — 认领KP\n' +
+    '.kp resign — 放弃KP\n' +
+    '【KP专属】\n' +
+    '.kp rc 技能 值 [b/p] — 秘密检定 (私信结果)\n' +
+    '.kp npc NPC名 技能 值 [b/p] — NPC检定\n' +
+    '.kp sc SAN值 成功损失/失败损失 — NPC理智检定'
+}
+
+function kpClaim(contactId, roomId, playerName) {
+  const existing = store.getKp(rooms, roomId)
+  if (existing && existing.contactId !== contactId) return `❌ ${existing.playerName} 已是本场KP`
+  store.setKp(rooms, roomId, contactId, playerName)
+  return `👁 ${playerName} 成为本场KP`
+}
+
+function kpResign(contactId, roomId) {
+  const kp = store.getKp(rooms, roomId)
+  if (!kp) return '❌ 当前没有KP'
+  if (kp.contactId !== contactId) return `❌ 你不是当前KP (当前KP: ${kp.playerName})`
+  store.clearKp(rooms, roomId)
+  return '👁 KP已卸任'
+}
+
+function kpSecretRoll(args, player) {
+  // .kp rc 技能名 值 [b/p]
+  const m = args.trim().match(/^(\S+)\s+(\d+)\s*(?:(b|p)(\d*))?$/i)
+  if (!m) return '❌ 格式: .kp rc 技能名 目标值 [b/p[数量]]'
+  const skillName = m[1], skillValue = parseInt(m[2])
+  const bpType = m[3], bpCount = m[4] ? parseInt(m[4]) : 1
+  const bonus   = bpType?.toLowerCase() === 'b' ? bpCount : 0
+  const penalty = bpType?.toLowerCase() === 'p' ? bpCount : 0
+  const result = skillCheck(skillName, skillValue, bonus, penalty)
+  player.last_roll = result.roll
+  return {
+    group: `🔒 KP 进行了秘密检定`,
+    dm:    `🔒 [秘密检定结果]\n${result.details}\n${quoteForLevel(result.successLevel)}`,
+  }
+}
+
+function kpNpcRoll(args) {
+  // .kp npc NPC名 技能名 值 [b/p]
+  const m = args.trim().match(/^(\S+)\s+(\S+)\s+(\d+)\s*(?:(b|p)(\d*))?$/i)
+  if (!m) return '❌ 格式: .kp npc NPC名 技能名 目标值 [b/p[数量]]'
+  const npcName = m[1], skillName = m[2], skillValue = parseInt(m[3])
+  const bpType = m[4], bpCount = m[5] ? parseInt(m[5]) : 1
+  const bonus   = bpType?.toLowerCase() === 'b' ? bpCount : 0
+  const penalty = bpType?.toLowerCase() === 'p' ? bpCount : 0
+  const result = skillCheck(skillName, skillValue, bonus, penalty)
+  return `📋 [${npcName}] ${result.details}\n${quoteForLevel(result.successLevel)}`
+}
+
+function kpNpcSan(args) {
+  // .kp sc SAN值 成功损失/失败损失
+  const m = args.trim().match(/^(\d+)\s+(\S+)\/(\S+)$/)
+  if (!m) return '❌ 格式: .kp sc SAN值 成功损失/失败损失\n例: .kp sc 55 1d3/1d10'
+  const result = sanCheck(parseInt(m[1]), m[2], m[3])
+  return `📋 [NPC] ${result.details}\n${quoteForLevel(result.passed ? '成功' : '失败')}`
+}
+
 function helpText(topic = '') {
   topic = topic.trim().toLowerCase()
   const topics = {
@@ -347,6 +458,7 @@ function helpText(topic = '') {
     show: '📋 查看人物卡 .show',
     rop:  '⚔️ 对抗检定 .rop\n.rop 力量 60 vs 力量 45',
     luck: '🍀 幸运消耗 .luck\n.luck set 值 — 设置幸运值\n.luck spend 数量 技能名 技能值',
+    kp:   '👁 KP功能 .kp\n.kp claim/resign — 认领/放弃\n.kp rc 技能 值 — 秘密检定\n.kp npc NPC名 技能 值 — NPC检定\n.kp sc SAN值 成功/失败 — NPC理智检定',
   }
   return topics[topic] ||
     '🎲 CoC 7.0 骰娘 指令列表\n━━━━━━━━━━━━━━━━\n' +
@@ -359,10 +471,11 @@ function helpText(topic = '') {
     '.coc [数量] → .save [n] — 生成并保存人物卡\n' +
     '.st 技能 值 [技能 值 ...] — 录入技能(支持批量)\n' +
     '.template — 私信发送空白人物卡模板\n' +
+    '.kp — KP功能（认领/秘密检定/NPC）\n' +
     '.show — 查看人物卡\n' +
     '.luck set/spend — 幸运管理\n' +
     '.help [指令] — 查看帮助\n' +
     '━━━━━━━━━━━━━━━━'
 }
 
-module.exports = { handleCommand, handleTemplate }
+module.exports = { handleCommand }

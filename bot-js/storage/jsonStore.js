@@ -3,7 +3,8 @@
 const fs = require('fs')
 const path = require('path')
 
-const DATA_FILE = path.join(__dirname, '../../data/players.json')
+const DATA_FILE  = path.join(__dirname, '../../data/players.json')
+const ROOMS_FILE = path.join(__dirname, '../../data/rooms.json')
 
 function ensureDir() {
   fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true })
@@ -33,4 +34,32 @@ function getPlayer(players, contactId, roomId, name = '') {
   return players[key]
 }
 
-module.exports = { load, save, getPlayer }
+// ── Rooms (KP tracking) ────────────────────────────────────────────────────
+
+function loadRooms() {
+  try {
+    if (fs.existsSync(ROOMS_FILE)) return JSON.parse(fs.readFileSync(ROOMS_FILE, 'utf8'))
+  } catch {}
+  return {}
+}
+
+function saveRooms(rooms) {
+  ensureDir()
+  fs.writeFileSync(ROOMS_FILE, JSON.stringify(rooms, null, 2), 'utf8')
+}
+
+function getKp(rooms, roomId) {
+  return rooms[roomId]?.kp ?? null
+}
+
+function setKp(rooms, roomId, contactId, playerName) {
+  if (!rooms[roomId]) rooms[roomId] = {}
+  rooms[roomId].kp = { contactId, playerName }
+}
+
+function clearKp(rooms, roomId) {
+  if (!rooms[roomId]) rooms[roomId] = {}
+  rooms[roomId].kp = null
+}
+
+module.exports = { load, save, getPlayer, loadRooms, saveRooms, getKp, setKp, clearKp }
