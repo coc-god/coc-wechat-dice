@@ -9,6 +9,7 @@ const { generateCharacters, formatStats, STAT_NAMES, STAT_ORDER } = require('../
 const { spendLuck } = require('../dice/luck')
 const store = require('../storage/jsonStore')
 const { quoteForLevel, quoteForRoll } = require('../shakespeare')
+const npcs = require('../npcs')
 
 // CN stat name → EN key (for routing batch .st to player.stats)
 const CN_TO_EN = { '力量':'STR', '体质':'CON', '体型':'SIZ', '敏捷':'DEX', '外貌':'APP', '智力':'INT', '意志':'POW', '教育':'EDU' }
@@ -390,7 +391,9 @@ function kpStatus(roomId) {
     '.kp resign — 放弃KP\n' +
     '【KP专属】\n' +
     '.kp rc 技能 值 [b/p] — 秘密检定 (私信结果)\n' +
-    '.kp npc NPC名 技能 值 [b/p] — NPC检定\n' +
+    '.kp npc list — 预设怪物列表\n' +
+    '.kp npc 怪物名 — 查看怪物数据\n' +
+    '.kp npc 怪物名 技能 [值] [b/p] — NPC检定\n' +
     '.kp sc SAN值 成功损失/失败损失 — NPC理智检定'
 }
 
@@ -426,15 +429,51 @@ function kpSecretRoll(args, player) {
 }
 
 function kpNpcRoll(args) {
-  // .kp npc NPC名 技能名 值 [b/p]
-  const m = args.trim().match(/^(\S+)\s+(\S+)\s+(\d+)\s*(?:(b|p)(\d*))?$/i)
-  if (!m) return '❌ 格式: .kp npc NPC名 技能名 目标值 [b/p[数量]]'
-  const npcName = m[1], skillName = m[2], skillValue = parseInt(m[3])
-  const bpType = m[4], bpCount = m[5] ? parseInt(m[5]) : 1
-  const bonus   = bpType?.toLowerCase() === 'b' ? bpCount : 0
-  const penalty = bpType?.toLowerCase() === 'p' ? bpCount : 0
+  const parts = args.trim().split(/\s+/)
+
+  // .kp npc list
+  if (parts[0]?.toLowerCase() === 'list') {
+    return `📋 预设怪物:\n  ${npcs.list()}\n用法: .kp npc 怪物名 技能名 [值] [b/p]`
+  }
+
+  const npcName = parts[0]
+  if (!npcName) return '❌ 格式: .kp npc 怪物名 技能名 [值]\n或: .kp npc list'
+
+  const monster = npcs.find(npcName)
+
+  // .kp npc 怪物名  → show stat sheet
+  if (parts.length === 1) {
+    if (!monster) return `❌ 未找到预设怪物「${npcName}」，输入 .kp npc list 查看列表`
+    return npcs.sheet(npcName, monster)
+  }
+
+  // Determine skill name, value, and b/p
+  const skillName = parts[1]
+  let skillValue, bpToken
+
+  if (parts[2] && /^\d+$/.test(parts[2])) {
+    // explicit value: NPC名 技能名 值 [b/p]
+    skillValue = parseInt(parts[2])
+    bpToken = parts[3]
+  } else {
+    // auto-lookup: NPC名 技能名 [b/p]
+    bpToken = parts[2]
+    if (monster?.skills[skillName] !== undefined) {
+      skillValue = monster.skills[skillName]
+    } else {
+      return monster
+        ? `❌ 「${npcName}」没有预设技能「${skillName}」\n可用: ${Object.keys(monster.skills).join('、')}`
+        : `❌ 未知怪物「${npcName}」需手动填值: .kp npc ${npcName} ${skillName} 目标值`
+    }
+  }
+
+  const bpMatch = bpToken?.match(/^(b|p)(\d*)$/i)
+  const bonus   = bpMatch?.[1]?.toLowerCase() === 'b' ? (parseInt(bpMatch[2]) || 1) : 0
+  const penalty = bpMatch?.[1]?.toLowerCase() === 'p' ? (parseInt(bpMatch[2]) || 1) : 0
+
   const result = skillCheck(skillName, skillValue, bonus, penalty)
-  return `📋 [${npcName}] ${result.details}\n${quoteForLevel(result.successLevel)}`
+  const label  = monster ? `[${npcName}]` : `[${npcName}]`
+  return `📋 ${label} ${result.details}\n${quoteForLevel(result.successLevel)}`
 }
 
 function kpNpcSan(args) {
