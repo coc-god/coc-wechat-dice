@@ -31,13 +31,8 @@ bot.on('message', async msg => {
   const room = msg.room()
   if (!room) return
 
-  const mentionSelf = await msg.mentionSelf()
-  console.log(`[消息] mentionSelf=${mentionSelf}`)
-  if (!mentionSelf) return
-
-  const text = (await msg.mentionText()).trim()
-  console.log(`[消息] mentionText="${text}"`)
-  if (!text) return
+  const text = msg.text().trim()
+  if (!text.startsWith('.')) return
 
   const talker = msg.talker()
   const contactId = talker.id
