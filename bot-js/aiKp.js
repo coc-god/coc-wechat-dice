@@ -1,6 +1,10 @@
 'use strict'
 
 const http = require('http')
+const fs   = require('fs')
+const path = require('path')
+
+const MODULES_DIR = path.join(__dirname, 'modules')
 
 const OLLAMA_HOST = 'localhost'
 const OLLAMA_PORT = 11434
@@ -97,7 +101,7 @@ async function chat(roomId, userMessage) {
     model: MODEL,
     messages,
     stream: false,
-    options: { temperature: 0.8, num_ctx: 4096 },
+    options: { temperature: 0.8, num_ctx: 8192 },
   })
 
   const reply = data.message?.content ?? ''
@@ -130,4 +134,18 @@ function stripChecks(text) {
   return text.replace(/\[检定[：:]\s*\S+\s+\d+\]/g, '').trim()
 }
 
-module.exports = { activate, deactivate, isActive, clearHistory, chat, stripThinking, parseChecks, stripChecks }
+// Load a module by name from the modules/ directory
+function loadModule(name) {
+  const file = path.join(MODULES_DIR, `${name}.txt`)
+  if (!fs.existsSync(file)) return null
+  return fs.readFileSync(file, 'utf8')
+}
+
+function listModules() {
+  if (!fs.existsSync(MODULES_DIR)) return []
+  return fs.readdirSync(MODULES_DIR)
+    .filter(f => f.endsWith('.txt'))
+    .map(f => f.replace('.txt', ''))
+}
+
+module.exports = { activate, deactivate, isActive, clearHistory, chat, stripThinking, parseChecks, stripChecks, loadModule, listModules }

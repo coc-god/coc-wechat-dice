@@ -402,9 +402,21 @@ function handleKpAi(args, contactId, roomId) {
       ? '🤖 AI守秘人运行中\n.kp ai stop — 停止 | .kp ai clear — 清除历史'
       : '🤖 AI守秘人未启动\n.kp ai start [团本简介] — 启动'
   }
+  if (sub === 'list') {
+    const mods = aiKp.listModules()
+    return mods.length
+      ? `📦 可用模组:\n  ${mods.join('\n  ')}\n用法: .kp ai start 模组名`
+      : '📦 暂无预装模组'
+  }
   if (sub === 'start' || sub === 'load') {
-    aiKp.activate(roomId, content)
-    const note = content ? '已加载团本，' : ''
+    // Try loading as a named module first
+    let moduleText = content
+    if (content && !content.includes('\n') && content.trim().split(' ').length === 1) {
+      const fromFile = aiKp.loadModule(content.trim())
+      if (fromFile) moduleText = fromFile
+    }
+    aiKp.activate(roomId, moduleText)
+    const note = moduleText ? `已加载「${content}」，` : ''
     return { group: `🤖 ${note}AI守秘人已启动！\n玩家直接发消息即可与KP互动\n.kp ai stop — 停止 | .kp ai clear — 清除历史`, aiKickoff: true }
   }
   if (sub === 'stop') {
