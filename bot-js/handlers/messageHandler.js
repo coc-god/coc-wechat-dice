@@ -9,7 +9,8 @@ const { generateCharacters, formatStats, STAT_NAMES, STAT_ORDER } = require('../
 const { spendLuck } = require('../dice/luck')
 const store = require('../storage/jsonStore')
 const { quoteForLevel, quoteForRoll } = require('../shakespeare')
-const npcs = require('../npcs')
+const npcs  = require('../npcs')
+const aiKp  = require('../aiKp')
 
 // CN stat name → EN key (for routing batch .st to player.stats)
 const CN_TO_EN = { '力量':'STR', '体质':'CON', '体型':'SIZ', '敏捷':'DEX', '外貌':'APP', '智力':'INT', '意志':'POW', '教育':'EDU' }
@@ -73,11 +74,12 @@ function handleCommand(text, contactId, roomId, playerName) {
   store.save(players)
   store.saveRooms(rooms)
 
-  // Result is either a plain string or { group?, dm? }
+  // Result is either a plain string or { group?, dm?, aiKickoff? }
   if (typeof result === 'string') return `@${playerName}\n${result}`
   return {
-    group: result.group ? `@${playerName}\n${result.group}` : null,
-    dm:    result.dm ?? null,
+    group:      result.group ? `@${playerName}\n${result.group}` : null,
+    dm:         result.dm ?? null,
+    aiKickoff:  result.aiKickoff ?? false,
   }
 }
 
@@ -368,6 +370,7 @@ function handleKp(args, player, contactId, roomId, playerName) {
   if (!sub) return kpStatus(roomId)
   if (sub === 'claim')  return kpClaim(contactId, roomId, playerName)
   if (sub === 'resign') return kpResign(contactId, roomId)
+  if (sub === 'ai')     return handleKpAi(rest, contactId, roomId)
 
   // Commands below require KP
   if (!isKp(contactId, roomId)) {
@@ -381,6 +384,38 @@ function handleKp(args, player, contactId, roomId, playerName) {
   if (sub === 'npc') return kpNpcRoll(rest)
   if (sub === 'sc')  return kpNpcSan(rest)
   return kpStatus(roomId)
+}
+
+function handleKpAi(args, contactId, roomId) {
+  if (!isKp(contactId, roomId)) {
+    const kp = store.getKp(rooms, roomId)
+    return kp ? `❌ 需要KP权限 (当前KP: ${kp.playerName})` : '❌ 需要KP权限，先用 .kp claim 认领KP'
+  }
+
+  const parts = args.trim().split(/\s+/)
+  const sub   = parts[0]?.toLowerCase() ?? ''
+  const content = parts.slice(1).join(' ')
+
+  if (!sub || sub === 'status') {
+    const active = aiKp.isActive(roomId)
+    return active
+      ? '🤖 AI守秘人运行中\n.kp ai stop — 停止 | .kp ai clear — 清除历史'
+      : '🤖 AI守秘人未启动\n.kp ai start [团本简介] — 启动'
+  }
+  if (sub === 'start' || sub === 'load') {
+    aiKp.activate(roomId, content)
+    const note = content ? '已加载团本，' : ''
+    return { group: `🤖 ${note}AI守秘人已启动！\n玩家直接发消息即可与KP互动\n.kp ai stop — 停止 | .kp ai clear — 清除历史`, aiKickoff: true }
+  }
+  if (sub === 'stop') {
+    aiKp.deactivate(roomId)
+    return '🤖 AI守秘人已停止'
+  }
+  if (sub === 'clear') {
+    aiKp.clearHistory(roomId)
+    return '🤖 对话历史已清除，从下一条消息重新开始'
+  }
+  return '❌ 用法: .kp ai start [团本] / .kp ai stop / .kp ai clear / .kp ai status'
 }
 
 function kpStatus(roomId) {
